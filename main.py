@@ -1,79 +1,123 @@
-import streamlit as st
+from flask import Flask, render_template_string, request
 import requests
 import json
 
-st.title("YouTube Test")
-video_id =st.text_input("Enter Your Video_id:")
+app = Flask(__name__)
 
-if video_id:
+# The HTML template defined as a string
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>YouTube Audio Test</title>
+    <style>
+        body { font-family: sans-serif; max-width: 900px; margin: 40px auto; line-height: 1.6; padding: 0 20px; }
+        .box { border: 1px solid #ccc; padding: 15px; border-radius: 8px; background: #f9f9f9; margin-bottom: 20px; }
+        textarea { width: 100%; height: 250px; font-family: monospace; font-size: 12px; }
+        input[type="text"] { width: 250px; padding: 8px; }
+        button { padding: 8px 15px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        .error { color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>YouTube InnerTube API Test</h1>
+    
+    <div class="box">
+        <form method="POST">
+            <label>Enter Video ID:</label>
+            <input type="text" name="video_id" value="{{ video_id }}" placeholder="e.g. dQw4w9WgXcQ" required>
+            <button type="submit">Extract Audio</button>
+        </form>
+    </div>
 
-    endpoint_url = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+    {% if audio_url %}
+    <div class="box">
+        <h3>Audio Player (itag 140)</h3>
+        <audio controls src="{{ audio_url }}" style="width: 100%;"></audio>
+        <p><small>Link extracted. If it doesn't play, the URL might be IP-restricted.</small></p>
+    </div>
+    {% elif video_id and not error %}
+    <div class="box error">
+        No itag 140 found in the response streaming data.
+    </div>
+    {% endif %}
 
-    headers = {
-        "User-Agent": "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-        "accept-language": "en-US,en",
-        "Content-Type": "application/json",
-        "X-Youtube-Client-Name": "28"
-    }
+    {% if error %}
+    <div class="box error">{{ error }}</div>
+    {% endif %}
 
-    data_1 = {
-        "context": {
-            "client": {
-                "clientName": "WEB",
-                "osName": "Windows",
-                "osVersion": "10.0",
-                "clientVersion": "2.20250523.01.00",
-                "platform": "DESKTOP"
-            }
-        },
-        "videoId": video_id,
-        "contentCheckOk": True
-    }
+    {% if response_json %}
+    <h3>Raw JSON Response</h3>
+    <textarea readonly>{{ response_json }}</textarea>
+    {% endif %}
+</body>
+</html>
+"""
 
-    data_2 = {
-        "context": {
-            "client": {
-                "clientName": "ANDROID_VR",
-                "clientVersion": "1.60.19",
-                "deviceMake": "Oculus",
-                "deviceModel": "Quest 3",
-                "osName": "Android",
-                "osVersion": "12L",
-                "androidSdkVersion": "32"
-            }
+@app.route("/", methods=["GET", "POST"])
+def index():
+    video_id = ""
+    audio_url = None
+    response_json = None
+    error = None
+
+    if request.method == "POST":
+        video_id = request.form.get("video_id")
+        endpoint_url = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false"
+        
+        headers = {
+            "User-Agent": "com.google.android.apps.youtube.vr.oculus/1.60.19 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
+            "Content-Type": "application/json",
+            "X-Youtube-Client-Name": "28"
         }
-    }
 
-    r1 = requests.post(endpoint_url, headers=headers, json=data_1)
-    visitor_response = r1.json()
+        try:
+            # 1. Get Visitor Data (WEB Client)
+            data_1 = {
+                "context": {"client": {"clientName": "WEB", "clientVersion": "2.20250523.01.00"}},
+                "videoId": video_id
+            }
+            r1 = requests.post(endpoint_url, headers=headers, json=data_1)
+            r1.raise_for_status()
+            visitor_data = r1.json().get("responseContext", {}).get("visitorData")
 
-    visitor_data = visitor_response["responseContext"]["visitorData"]
+            # 2. Get Audio URL (ANDROID_VR Client)
+            data_2 = {
+                "context": {
+                    "client": {
+                        "clientName": "ANDROID_VR",
+                        "clientVersion": "1.60.19",
+                        "visitorData": visitor_data
+                    }
+                },
+                "videoId": video_id,
+                "contentCheckOk": True
+            }
+            
+            r2 = requests.post(endpoint_url, headers=headers, json=data_2)
+            r2.raise_for_status()
+            resp_data = r2.json()
+            
+            # Format JSON for the textarea
+            response_json = json.dumps(resp_data, indent=2)
 
-    data_2["context"]["client"]["visitorData"] = visitor_data
-    data_2.update({
-        "videoId": video_id,
-        "contentCheckOk": True
-    })
+            # 3. Extract itag 140
+            formats = resp_data.get("streamingData", {}).get("adaptiveFormats", [])
+            for f in formats:
+                if f.get("itag") == 140:
+                    audio_url = f.get("url")
+                    break
+        
+        except Exception as e:
+            error = f"Request Failed: {str(e)}"
 
-    r2 = requests.post(endpoint_url, headers=headers, json=data_2)
+    return render_template_string(
+        HTML_TEMPLATE, 
+        video_id=video_id, 
+        audio_url=audio_url, 
+        response_json=response_json,
+        error=error
+    )
 
-    st.text_area("Innertube Response", json.dumps(r2.json(), indent=2), height=400)
-    formats = r2.json()["streamingData"]["adaptiveFormats"]
-
-    itag_140_url = None
-
-    for f in formats:
-        if f.get("itag") == 140:
-            itag_140_url = f.get("url")
-            break
-
-    # st.write(itag_140_url)
-    # import streamlit as st
-
-    # Your Google audio URL
-    audio_url = itag_140_url
-
-    st.title("Google Audio Player")
-
-    # Play the audio using the URL
-    st.audio(audio_url, format="audio/mp3")
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
