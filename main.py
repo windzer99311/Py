@@ -3,7 +3,7 @@ import requests
 import json
 
 st.title("YouTube Test")
-video_id =st.text("Enter Your Video_id:")
+video_id =st.text_input("Enter Your Video_id:")
 
 if video_id:
 
