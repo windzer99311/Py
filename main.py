@@ -63,7 +63,7 @@ if video_id:
     itag_140_url = None
 
     for f in formats:
-        if f.get("itag") == 140:
+        if f.get("itag") == 251:
             itag_140_url = f.get("url")
             break
 
