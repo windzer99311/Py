@@ -58,3 +58,22 @@ if video_id:
     r2 = requests.post(endpoint_url, headers=headers, json=data_2)
 
     st.text_area("Innertube Response", json.dumps(r2.json(), indent=2), height=400)
+    formats = r2.json()["streamingData"]["adaptiveFormats"]
+
+    itag_140_url = None
+
+    for f in formats:
+        if f.get("itag") == 140:
+            itag_140_url = f.get("url")
+            break
+
+    # st.write(itag_140_url)
+    # import streamlit as st
+
+    # Your Google audio URL
+    audio_url = itag_140_url
+
+    st.title("Google Audio Player")
+
+    # Play the audio using the URL
+    st.audio(audio_url, format="audio/mp3")
